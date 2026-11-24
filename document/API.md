@@ -7,6 +7,8 @@ Base path: `/api/v1/media`. All `/api/**` endpoints require an API key (see [SEC
 | POST | `/api/v1/media/process` | Merge narration parts and render the MP4 for one story | Yes |
 | GET | `/api/v1/media/{storyId}/audio` | Download the merged MP3 | Yes |
 | GET | `/api/v1/media/{storyId}/video` | Download the MP4 | Yes |
+| POST | `/api/v1/media/{storyId}/short` | Render a vertical 1080x1920 clip (up to 60 s) for YouTube Shorts | Yes |
+| GET | `/api/v1/media/{storyId}/short` | Download the Short MP4 | Yes |
 | DELETE | `/api/v1/media/{storyId}` | Delete a story's outputs | Yes |
 | GET | `/actuator/health` | Liveness and FFmpeg availability (no details) | No |
 | GET | `/v3/api-docs`, `/swagger-ui.html` | OpenAPI document and UI (disable with `OPENAPI_ENABLED=false`) | No |
@@ -142,6 +144,41 @@ Lists the staged part numbers, in ascending order. Use it to skip chunks that al
 Omit `audioParts`. Send `storyId`, `image` and any render options. The service renders from the staged chunks in numeric order. Numbering must be contiguous from 1 unless `allowGaps=true`.
 
 On success the staged chunks are deleted. On failure they are kept, so the render can be retried without regenerating audio.
+
+## POST /api/v1/media/{storyId}/short
+
+Cuts a vertical clip from the story's merged narration, for YouTube Shorts. Call `POST /process` first. The story's outputs expire after `OUTPUT_RETENTION_HOURS`, after which this returns `404 OUTPUT_NOT_FOUND`.
+
+Multipart fields:
+
+| Field | Required | Default | Notes |
+|---|---|---|---|
+| `image` | yes | | PNG, JPEG, WEBP or BMP. Shown whole over a blurred, cropped copy of itself. |
+| `startSeconds` | no | `0` | Where in the narration the clip starts. Must be 0 or greater and inside the narration. |
+| `durationSeconds` | no | `55` | Between 5 and 60. If the narration ends sooner, the clip is shorter. |
+
+Output: H.264 + AAC, 1080x1920, `yuv420p`, `faststart`, with a short audio fade-out. Re-requesting replaces the previous clip. Response `200`:
+
+```json
+{
+  "storyId": "STORY-001",
+  "status": "COMPLETED",
+  "message": "Short clip rendered. Download it before the retention period ends.",
+  "shortFilename": "STORY-001_short.mp4",
+  "shortSizeBytes": 4812345,
+  "startSeconds": 0.0,
+  "durationSeconds": 55.0,
+  "processingDurationMs": 6100,
+  "shortDownloadUrl": "https://host/api/v1/media/STORY-001/short",
+  "requestId": "..."
+}
+```
+
+Errors use the standard body: `INVALID_RENDER_OPTIONS` (bad range), `INVALID_IMAGE`, `OUTPUT_NOT_FOUND`, `STORY_BUSY`, `SERVICE_BUSY`.
+
+## GET /api/v1/media/{storyId}/short
+
+Downloads `<storyId>_short.mp4` as `video/mp4`. Returns `404 OUTPUT_NOT_FOUND` if no clip exists.
 
 ## GET /api/v1/media/{storyId}/audio
 

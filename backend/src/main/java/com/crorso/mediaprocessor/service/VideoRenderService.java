@@ -23,4 +23,12 @@ public class VideoRenderService {
                 runner.run(FfmpegCommands.renderStillVideo(ffmpegPath, image, narration, output, options), workDir),
                 "rendering the video");
     }
+
+    public void renderShort(Path image, Path narration, RenderOptions options, double startSeconds,
+                            double durationSeconds, Path workDir, Path output) {
+        CommandRunner.requireSuccess(
+                runner.run(FfmpegCommands.renderShortClip(ffmpegPath, image, narration, output, options,
+                        startSeconds, durationSeconds), workDir),
+                "rendering the short clip");
+    }
 }

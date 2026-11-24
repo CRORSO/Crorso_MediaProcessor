@@ -1,6 +1,9 @@
 package com.crorso.mediaprocessor.service;
 
 import com.crorso.mediaprocessor.config.MediaProperties;
+import com.crorso.mediaprocessor.dto.ImageFit;
+import com.crorso.mediaprocessor.dto.OutputFormat;
+import com.crorso.mediaprocessor.dto.RenderOptions;
 import com.crorso.mediaprocessor.exception.ErrorCode;
 import com.crorso.mediaprocessor.exception.MediaException;
 import com.crorso.mediaprocessor.security.RequestIdFilter;
@@ -36,6 +39,13 @@ public class MediaProcessingService {
     private static final Logger log = LoggerFactory.getLogger(MediaProcessingService.class);
     private static final long BYTES_PER_MB = 1024L * 1024L;
     private static final int TEMP_EXPANSION_FACTOR = 4;
+
+    /** Vertical frame for YouTube Shorts. */
+    static final int SHORT_WIDTH = 1080;
+    static final int SHORT_HEIGHT = 1920;
+    public static final double SHORT_MIN_SECONDS = 5.0;
+    /** YouTube's classic Shorts limit; staying at or under it keeps the clip eligible everywhere. */
+    public static final double SHORT_MAX_SECONDS = 60.0;
 
     private final MediaProperties properties;
     private final MediaStorage storage;
@@ -83,6 +93,72 @@ public class MediaProcessingService {
             throw new MediaException(ErrorCode.PROCESSING_FAILED,
                     "Media files could not be read or written during processing.", e);
         }
+    }
+
+    /**
+     * Cuts a vertical clip from the narration already published for the story. The story must have been
+     * processed first and not yet expired. The clip is verified before it replaces any earlier one.
+     */
+    public ShortResult createShort(ShortCommand command) {
+        long started = System.nanoTime();
+        String storyId = command.storyId();
+
+        try (JobGate.Ticket ignored = jobGate.acquire(storyId)) {
+            StoredMedia narration = storage.find(storyId, MediaKind.AUDIO)
+                    .orElseThrow(() -> new MediaException(ErrorCode.OUTPUT_NOT_FOUND,
+                            "No merged audio exists for this story. Process the story first, "
+                                    + "and process it again if it has expired."));
+            requireFreeSpace(command.image().getSize());
+
+            Path workspace = storage.createWorkspace();
+            try {
+                return runShortPipeline(command, narration, workspace, started);
+            } finally {
+                storage.deleteWorkspace(workspace);
+            }
+        } catch (IOException e) {
+            throw new MediaException(ErrorCode.PROCESSING_FAILED,
+                    "Media files could not be read or written during processing.", e);
+        }
+    }
+
+    private ShortResult runShortPipeline(ShortCommand command, StoredMedia narration, Path workspace, long started)
+            throws IOException {
+        String storyId = command.storyId();
+        Path inputDir = Files.createDirectories(workspace.resolve("input"));
+        Path outputDir = Files.createDirectories(workspace.resolve("output"));
+
+        Path image = saveImage(command.image(), inputDir);
+        ffprobe.requireImage(image);
+        MediaInfo narrationInfo = ffprobe.requireMp3(narration.path(), "The stored narration");
+
+        double narrationSeconds = narrationInfo.durationSeconds();
+        double start = command.startSeconds();
+        double available = narrationSeconds - start;
+        if (available < 1.0) {
+            throw new MediaException(ErrorCode.INVALID_RENDER_OPTIONS,
+                    "startSeconds is beyond the end of the narration, which is "
+                            + round(narrationSeconds) + " seconds long.");
+        }
+        // A narration shorter than the requested clip simply gives a shorter clip.
+        double clipSeconds = Math.min(command.durationSeconds(), available);
+
+        RenderOptions options = new RenderOptions(SHORT_WIDTH, SHORT_HEIGHT, properties.defaultFrameRate(),
+                ImageFit.COVER, properties.defaultAudioBitrate(), properties.defaultBackgroundColor(),
+                OutputFormat.MP4);
+
+        Path clip = outputDir.resolve("short.mp4");
+        videoRender.renderShort(image, narration.path(), options, start, clipSeconds, workspace, clip);
+        double measuredSeconds = verifier.verifyVideo(clip, clipSeconds, options);
+
+        StoredMedia published = storage.publish(storyId, MediaKind.SHORT, clip);
+
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000L;
+        log.info("Rendered short for story {} request {}: start={}, seconds={}, bytes={}, elapsedMs={}",
+                storyId, MDC.get(RequestIdFilter.MDC_KEY), round(start), round(measuredSeconds),
+                published.sizeBytes(), elapsedMs);
+
+        return new ShortResult(storyId, published, start, measuredSeconds, elapsedMs);
     }
 
     private ProcessingResult runPipeline(ProcessingCommand command, List<Path> staged, Path workspace, long started)

@@ -203,6 +203,83 @@ class MediaProcessingIntegrationTest extends AbstractApiTest {
                 .andExpect(status().isNotFound());
     }
 
+    @Test
+    void shortClipIsVerticalAndHonoursStartAndDuration() throws Exception {
+        byte[] image = Files.readAllBytes(FfmpegFixtures.solidPng(fixtures, "sq.png", 600, 600));
+        byte[] audio = Files.readAllBytes(FfmpegFixtures.sineMp3(fixtures, "long.mp3", 8.0, 44_100, 2));
+        mockMvc.perform(processRequest("IT-SHORT", imageUpload("sq.png", image),
+                        partUpload("IT-SHORT_part_001.mp3", audio)))
+                .andExpect(status().isOk());
+
+        MvcResult result = mockMvc.perform(shortRequest("IT-SHORT", imageUpload("sq.png", image))
+                        .param("startSeconds", "2")
+                        .param("durationSeconds", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.shortFilename").value("IT-SHORT_short.mp4"))
+                .andReturn();
+
+        JsonNode body = JSON.readTree(result.getResponse().getContentAsString());
+        assertThat(body.get("durationSeconds").asDouble()).isCloseTo(5.0, within(TOLERANCE_SECONDS));
+        assertThat(body.get("shortDownloadUrl").asText()).endsWith("/api/v1/media/IT-SHORT/short");
+
+        Path clip = FfmpegFixtures.writeBytes(fixtures, "short.mp4", download("/api/v1/media/IT-SHORT/short", "video/mp4"));
+        assertThat(FfmpegFixtures.probe(clip, "v:0", "stream=codec_name,width,height,pix_fmt")).isEqualTo("h264,1080,1920,yuv420p");
+        assertThat(FfmpegFixtures.probe(clip, "a:0", "stream=codec_name")).isEqualTo("aac");
+        assertThat(FfmpegFixtures.duration(clip)).isCloseTo(5.0, within(TOLERANCE_SECONDS));
+
+        // The full-length video from /process is untouched.
+        Path full = FfmpegFixtures.writeBytes(fixtures, "full.mp4", download("/api/v1/media/IT-SHORT/video", "video/mp4"));
+        assertThat(FfmpegFixtures.probe(full, "v:0", "stream=width,height")).isEqualTo("1920,1080");
+    }
+
+    @Test
+    void shortClipIsTrimmedWhenNarrationEndsEarly() throws Exception {
+        byte[] image = Files.readAllBytes(FfmpegFixtures.solidPng(fixtures, "sq2.png", 640, 360));
+        byte[] audio = Files.readAllBytes(FfmpegFixtures.sineMp3(fixtures, "brief.mp3", 6.0, 44_100, 2));
+        mockMvc.perform(processRequest("IT-SHORT-TRIM", imageUpload("sq2.png", image),
+                        partUpload("IT-SHORT-TRIM_part_001.mp3", audio)))
+                .andExpect(status().isOk());
+
+        // Default duration is 55 s, but only 6 s of narration exist.
+        mockMvc.perform(shortRequest("IT-SHORT-TRIM", imageUpload("sq2.png", image)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.durationSeconds").value(org.hamcrest.Matchers.closeTo(6.0, TOLERANCE_SECONDS)));
+    }
+
+    @Test
+    void shortClipRejectsBadRangesAndMissingStory() throws Exception {
+        byte[] image = Files.readAllBytes(FfmpegFixtures.solidPng(fixtures, "sq3.png", 640, 360));
+        byte[] audio = Files.readAllBytes(FfmpegFixtures.sineMp3(fixtures, "r.mp3", 3.0, 44_100, 2));
+
+        mockMvc.perform(shortRequest("IT-SHORT-MISSING", imageUpload("sq3.png", image)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("OUTPUT_NOT_FOUND"));
+
+        mockMvc.perform(processRequest("IT-SHORT-RANGE", imageUpload("sq3.png", image),
+                        partUpload("IT-SHORT-RANGE_part_001.mp3", audio)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(shortRequest("IT-SHORT-RANGE", imageUpload("sq3.png", image)).param("durationSeconds", "61"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_RENDER_OPTIONS"));
+        mockMvc.perform(shortRequest("IT-SHORT-RANGE", imageUpload("sq3.png", image)).param("durationSeconds", "4"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(shortRequest("IT-SHORT-RANGE", imageUpload("sq3.png", image)).param("startSeconds", "-1"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(shortRequest("IT-SHORT-RANGE", imageUpload("sq3.png", image)).param("startSeconds", "10"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_RENDER_OPTIONS"));
+    }
+
+    private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder shortRequest(
+            String storyId, MockMultipartFile image) {
+        return org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .multipart("/api/v1/media/" + storyId + "/short")
+                .file(image)
+                .header("X-API-Key", API_KEY);
+    }
+
     private byte[] download(String path, String expectedContentType) throws Exception {
         MvcResult result = mockMvc.perform(get(path).header("X-API-Key", API_KEY))
                 .andExpect(status().isOk())

@@ -56,6 +56,28 @@ class FfmpegCommandsTest {
     }
 
     @Test
+    void shortCommandCutsRequestedWindowIntoVerticalFrame() {
+        RenderOptions vertical = new RenderOptions(1080, 1920, 24, ImageFit.COVER, "192k", "black", OutputFormat.MP4);
+        List<String> args = FfmpegCommands.renderShortClip(FFMPEG, IMAGE, AUDIO, VIDEO, vertical, 12.5, 55);
+
+        assertThat(args).containsSequence("-ss", "12.500", "-t", "55.000", "-i", AUDIO.toAbsolutePath().toString());
+        assertThat(args).containsSequence("-map", "[v]", "-map", "[a]");
+        assertThat(args).containsSequence("-t", "55.000", "-shortest");
+        assertThat(args).containsSequence("-movflags", "+faststart");
+        assertThat(args.get(args.size() - 1)).isEqualTo(VIDEO.toAbsolutePath().toString());
+        String graph = args.get(args.indexOf("-filter_complex") + 1);
+        assertThat(graph).contains("scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=40:5");
+        assertThat(graph).contains("scale=1080:1920:force_original_aspect_ratio=decrease");
+        assertThat(graph).contains("afade=t=out:st=54.000:d=1.000");
+    }
+
+    @Test
+    void shortFadeShrinksForVeryShortClips() {
+        RenderOptions vertical = new RenderOptions(1080, 1920, 24, ImageFit.COVER, "192k", "black", OutputFormat.MP4);
+        assertThat(FfmpegCommands.shortFilter(vertical, 2.0)).contains("afade=t=out:st=1.500:d=0.500");
+    }
+
+    @Test
     void joinFilterNormalisesEachInputThenConcatenatesInArgumentOrder() {
         String graph = FfmpegCommands.joinFilter(3);
 

@@ -3,14 +3,19 @@ package com.crorso.mediaprocessor.controller;
 import com.crorso.mediaprocessor.config.MediaProperties;
 import com.crorso.mediaprocessor.dto.ProcessMediaResponse;
 import com.crorso.mediaprocessor.dto.RenderOptions;
+import com.crorso.mediaprocessor.dto.ShortClipResponse;
 import com.crorso.mediaprocessor.dto.StagedPartResponse;
 import com.crorso.mediaprocessor.dto.StagedPartsResponse;
+import com.crorso.mediaprocessor.exception.ErrorCode;
+import com.crorso.mediaprocessor.exception.MediaException;
 import com.crorso.mediaprocessor.security.RequestIdFilter;
 import com.crorso.mediaprocessor.service.MediaOutputService;
 import com.crorso.mediaprocessor.service.MediaProcessingService;
 import com.crorso.mediaprocessor.service.PartStagingService;
 import com.crorso.mediaprocessor.service.ProcessingCommand;
 import com.crorso.mediaprocessor.service.ProcessingResult;
+import com.crorso.mediaprocessor.service.ShortCommand;
+import com.crorso.mediaprocessor.service.ShortResult;
 import com.crorso.mediaprocessor.service.RenderOptionsResolver;
 import com.crorso.mediaprocessor.service.StagedPart;
 import com.crorso.mediaprocessor.service.storage.MediaKind;
@@ -43,6 +48,9 @@ import java.util.List;
 @RequestMapping("/api/v1/media")
 @Tag(name = "Media", description = "Merge narration MP3 parts and render an MP4 from a still image. Requires X-API-Key.")
 public class MediaController {
+
+    private static final double DEFAULT_SHORT_START_SECONDS = 0.0;
+    private static final double DEFAULT_SHORT_SECONDS = 55.0;
 
     private final MediaProperties properties;
     private final RenderOptionsResolver optionsResolver;
@@ -131,6 +139,52 @@ public class MediaController {
                 audioUrl,
                 videoUrl,
                 RequestIdFilter.currentRequestId(request));
+    }
+
+    @PostMapping(value = "/{storyId}/short", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Render a vertical Short clip",
+            description = "Cuts a 1080x1920 MP4 from the story's merged narration, for YouTube Shorts. Call POST /process "
+                    + "first. startSeconds defaults to 0 and durationSeconds to 55 (allowed 5-60). The image is shown "
+                    + "whole over a blurred copy of itself. Re-requesting replaces the previous clip.")
+    public ShortClipResponse createShort(
+            HttpServletRequest request,
+            @PathVariable String storyId,
+            @RequestParam("image") MultipartFile image,
+            @RequestParam(value = "startSeconds", required = false) Double startSeconds,
+            @RequestParam(value = "durationSeconds", required = false) Double durationSeconds) {
+
+        String validatedStoryId = StoryIdValidator.validate(storyId);
+        double start = startSeconds != null ? startSeconds : DEFAULT_SHORT_START_SECONDS;
+        double duration = durationSeconds != null ? durationSeconds : DEFAULT_SHORT_SECONDS;
+        if (!Double.isFinite(start) || start < 0) {
+            throw new MediaException(ErrorCode.INVALID_RENDER_OPTIONS, "startSeconds must be 0 or greater.");
+        }
+        if (!Double.isFinite(duration) || duration < MediaProcessingService.SHORT_MIN_SECONDS
+                || duration > MediaProcessingService.SHORT_MAX_SECONDS) {
+            throw new MediaException(ErrorCode.INVALID_RENDER_OPTIONS, "durationSeconds must be between "
+                    + (int) MediaProcessingService.SHORT_MIN_SECONDS + " and "
+                    + (int) MediaProcessingService.SHORT_MAX_SECONDS + ".");
+        }
+
+        ShortResult result = processingService.createShort(new ShortCommand(validatedStoryId, image, start, duration));
+
+        return new ShortClipResponse(
+                validatedStoryId,
+                "COMPLETED",
+                "Short clip rendered. Download it before the retention period ends.",
+                result.clip().filename(),
+                result.clip().sizeBytes(),
+                result.startSeconds(),
+                result.durationSeconds(),
+                result.processingDurationMs(),
+                baseUrl(request) + "/api/v1/media/" + validatedStoryId + "/short",
+                RequestIdFilter.currentRequestId(request));
+    }
+
+    @GetMapping("/{storyId}/short")
+    @Operation(summary = "Download the vertical Short MP4")
+    public ResponseEntity<Resource> downloadShort(@PathVariable String storyId) {
+        return download(storyId, MediaKind.SHORT);
     }
 
     @GetMapping("/{storyId}/audio")

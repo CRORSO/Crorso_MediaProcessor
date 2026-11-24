@@ -89,6 +89,49 @@ public final class FfmpegCommands {
         return command;
     }
 
+    /**
+     * Renders a vertical clip of the narration for YouTube Shorts. Only {@code durationSeconds} of audio,
+     * starting at {@code startSeconds}, is used. The still image is shown whole over a blurred, cropped copy of
+     * itself, so a square or landscape picture fills the tall frame without being cut off.
+     */
+    public static List<String> renderShortClip(String ffmpeg, Path image, Path audio, Path output,
+                                               RenderOptions options, double startSeconds, double durationSeconds) {
+        List<String> command = base(ffmpeg);
+        String fps = String.valueOf(options.frameRate());
+        String duration = seconds(durationSeconds);
+        command.addAll(List.of("-loop", "1", "-framerate", fps, "-i", path(image)));
+        command.addAll(List.of("-ss", seconds(startSeconds), "-t", duration, "-i", path(audio)));
+        command.addAll(List.of(
+                "-filter_complex", shortFilter(options, durationSeconds),
+                "-map", "[v]", "-map", "[a]",
+                "-c:v", "libx264", "-preset", "medium", "-tune", "stillimage", "-crf", "20",
+                "-pix_fmt", "yuv420p", "-r", fps,
+                "-c:a", "aac", "-b:a", options.audioBitrate(),
+                "-t", duration,
+                "-shortest",
+                "-movflags", "+faststart",
+                "-f", "mp4", path(output)));
+        return command;
+    }
+
+    /** Filter graph for {@link #renderShortClip}: blurred fill behind the whole image, plus a short audio fade-out. */
+    static String shortFilter(RenderOptions options, double durationSeconds) {
+        int w = options.videoWidth();
+        int h = options.videoHeight();
+        double fade = Math.min(1.0, durationSeconds / 4.0);
+        return String.format(Locale.ROOT,
+                "[0:v]split=2[bg][fg];"
+                        + "[bg]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,boxblur=40:5[blurred];"
+                        + "[fg]scale=%d:%d:force_original_aspect_ratio=decrease[whole];"
+                        + "[blurred][whole]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2,setsar=1[v];"
+                        + "[1:a]afade=t=out:st=%.3f:d=%.3f[a]",
+                w, h, w, h, w, h, durationSeconds - fade, fade);
+    }
+
+    private static String seconds(double value) {
+        return String.format(Locale.ROOT, "%.3f", value);
+    }
+
     /** Builds the video filter for the requested fit mode. Exposed for tests. */
     public static String frameFilter(RenderOptions options) {
         int w = options.videoWidth();

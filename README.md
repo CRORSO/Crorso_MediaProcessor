@@ -32,6 +32,8 @@ Requires JDK 21 (Gradle provisions one if missing) and FFmpeg/FFprobe on `PATH`.
 | POST | `/api/v1/media/process` | Multipart: `storyId`, `image`, repeated `audioParts`, plus optional render options |
 | GET | `/api/v1/media/{storyId}/audio` | Download the merged MP3 |
 | GET | `/api/v1/media/{storyId}/video` | Download the MP4 |
+| POST | `/api/v1/media/{storyId}/short` | Multipart: `image`, optional `startSeconds`, `durationSeconds` (5-60). Renders a vertical 1080x1920 clip for YouTube Shorts |
+| GET | `/api/v1/media/{storyId}/short` | Download the Short MP4 |
 | DELETE | `/api/v1/media/{storyId}` | Delete a story's outputs |
 | GET | `/actuator/health` | Health (public) |
 
