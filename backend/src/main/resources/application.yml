@@ -1,0 +1,65 @@
+# All values are driven by generic environment variables. Defaults suit local development.
+# See document/CONFIGURATION.md for the full reference.
+
+spring:
+  application:
+    name: crorso-media-processor
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: ${MAX_FILE_SIZE_MB:25}MB
+      max-request-size: ${MAX_UPLOAD_SIZE_MB:500}MB
+      file-size-threshold: 1MB
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+server:
+  # Railway injects PORT; SERVER_PORT is used locally.
+  port: ${PORT:${SERVER_PORT:8080}}
+  shutdown: graceful
+  # Trust X-Forwarded-* from the platform proxy so download URLs use the public https host.
+  forward-headers-strategy: framework
+  tomcat:
+    max-part-count: ${MAX_MULTIPART_PART_COUNT:250}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+springdoc:
+  api-docs:
+    enabled: ${OPENAPI_ENABLED:true}
+  swagger-ui:
+    enabled: ${OPENAPI_ENABLED:true}
+
+logging:
+  level:
+    root: ${LOG_LEVEL:INFO}
+    com.crorso.mediaprocessor: ${LOG_LEVEL:INFO}
+
+media:
+  # Required in production. Leave blank locally to reject all /api requests until set.
+  api-key: ${API_KEY:}
+  temp-dir: ${MEDIA_TEMP_DIR:./data/temp}
+  output-dir: ${MEDIA_OUTPUT_DIR:./data/output}
+  ffmpeg-path: ${FFMPEG_PATH:ffmpeg}
+  ffprobe-path: ${FFPROBE_PATH:ffprobe}
+  max-upload-size-mb: ${MAX_UPLOAD_SIZE_MB:500}
+  max-file-size-mb: ${MAX_FILE_SIZE_MB:25}
+  max-audio-parts: ${MAX_AUDIO_PARTS:200}
+  max-audio-duration-seconds: ${MAX_AUDIO_DURATION_SECONDS:7200}
+  max-concurrent-jobs: ${MAX_CONCURRENT_JOBS:2}
+  processing-timeout-seconds: ${PROCESSING_TIMEOUT_SECONDS:900}
+  output-retention-hours: ${OUTPUT_RETENTION_HOURS:24}
+  default-video-width: ${DEFAULT_VIDEO_WIDTH:1920}
+  default-video-height: ${DEFAULT_VIDEO_HEIGHT:1080}
+  default-frame-rate: ${DEFAULT_FRAME_RATE:24}
+  default-audio-bitrate: ${DEFAULT_AUDIO_BITRATE:192k}
+  default-background-color: ${DEFAULT_BACKGROUND_COLOR:black}
+  min-free-disk-mb: ${MIN_FREE_DISK_MB:512}
+  public-base-url: ${PUBLIC_BASE_URL:}

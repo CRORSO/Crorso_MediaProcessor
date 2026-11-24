@@ -1,0 +1,5 @@
+// Root build: shared settings only. The application lives in :backend.
+subprojects {
+    group = 'com.crorso'
+    version = '1.0.0'
+}

@@ -1,0 +1,23 @@
+# Keep the build context small and free of local state or secrets.
+.git
+.gitignore
+.gradle
+**/build
+**/out
+.idea
+.vscode
+*.iml
+.env
+.env.*
+!.env.example
+data
+media-data
+document
+*.md
+Dockerfile
+docker-compose.yml
+.dockerignore
+*.mp3
+*.mp4
+*.png
+*.jpg
